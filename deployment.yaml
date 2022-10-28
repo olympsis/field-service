@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: olympsis-field
+  namespace: olympsis-services
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: olympsis-field-app
+  template:
+    metadata:
+      labels:
+        app: olympsis-field-app
+    spec:
+      containers:
+        - name: field-service
+          imagePullPolicy: Always
+          image: localhost:32000/olympsis-field:registry
+          ports:
+            - containerPort: 7002
+
