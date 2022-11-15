@@ -31,11 +31,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	r.Use(service.Middleware)
+
 	// handlers for http requests
-	r.Handle("/v1/field/fieldData", service.GetField()).Methods("GET")
-	r.Handle("/v1/field/fieldData", service.CreateField()).Methods("POST")
-	r.Handle("/v1/field/fieldData", service.UpdateField()).Methods("PUT")
-	r.Handle("/v1/field/fieldData", service.DeleteField()).Methods("DELETE")
+	// get fields
+	r.Handle("/v1/fields", service.GetFields()).Methods("GET")
+
+	// get a field
+	r.Handle("/v1/fields/{id}", service.GetField()).Methods("GET")
+
+	// create field
+	r.Handle("/v1/fields", service.CreateField()).Methods("POST")
+
+	// update a field
+	r.Handle("/v1/fields/{id}", service.UpdateField()).Methods("PUT")
+
+	// delete a field
+	r.Handle("/v1/fields/{id}", service.DeleteField()).Methods("DELETE")
 
 	port := os.Getenv("PORT")
 
@@ -43,14 +55,14 @@ func main() {
 	s := &http.Server{
 		Addr:         `:` + port, // pull from env
 		Handler:      r,
-		IdleTimeout:  120 * time.Second,
-		ReadTimeout:  1000 * time.Second,
-		WriteTimeout: 1000 * time.Second,
+		IdleTimeout:  30 * time.Second,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	}
 
 	// start server
 	go func() {
-		l.Info(`Starting Auth Service at...` + port)
+		l.Info(`Starting Field Service at...` + port)
 		err := s.ListenAndServe()
 
 		if err != nil {

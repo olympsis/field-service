@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt"
@@ -27,14 +28,25 @@ type FieldService struct {
 }
 
 type Field struct {
-	ID        primitive.ObjectID `json:"_id" bson:"_id"`
-	Name      string             `json:"Name" bson:"Name"`
-	Images    []string           `json:"images" bson:"images"`
-	Longitude string             `json:"longitude" bson:"longitude"`
-	Latitude  string             `json:"latitude" bson:"latitude"`
-	City      string             `json:"city" bson:"city"`
-	State     string             `json:"state" bson:"state"`
-	Parking   string             `json:"parking" bson:"parking"`
+	ID       primitive.ObjectID `json:"_id" bson:"_id"`
+	Owner    string             `json:"owner" bson:"owner"`
+	Name     string             `json:"name" bson:"name"`
+	Images   []string           `json:"images" bson:"images"`
+	Location GeoJSON            `json:"location" bson:"location"`
+	City     string             `json:"city" bson:"city"`
+	State    string             `json:"state" bson:"state"`
+	Country  string             `json:"country" bson:"country"`
+	IsPublic bool               `json:"isPublic" bson:"isPublic"`
+}
+
+type GeoJSON struct {
+	Type        string   `json:"type" bson:"type"`
+	Coordinates []string `json:"coordinates" bson:"coordinates"`
+}
+
+type FieldsResponse struct {
+	TotalFields int     `json:"totalFields"`
+	Fields      []Field `json:"fields"`
 }
 
 /*
@@ -46,8 +58,10 @@ func NewFieldService(l *logrus.Logger, r *mux.Router) *FieldService {
 
 /*
 Connect to Database
--	Initiates connection to MongoDB
--	Grabs Enviroment Variables
+
+  - Initiates connection to MongoDB
+
+  - Grabs Enviroment Variables
 */
 func (a *FieldService) ConnectToDatabase() (bool, error) {
 	a.log.Info("Connecting to Database...")
@@ -76,12 +90,12 @@ Create Field Data (POST)
 
   - Create field data in user databse
 
-    Returns:
-    Http handler
+Returns:
 
-  - Writes object back to client
+	Http handler
+		- Writes object back to client
 */
-func (a *FieldService) CreateField() http.HandlerFunc {
+func (f *FieldService) CreateField() http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		var req Field
 
@@ -97,30 +111,111 @@ func (a *FieldService) CreateField() http.HandlerFunc {
 		}
 
 		field := Field{
-			ID:        primitive.NewObjectID(),
-			Name:      req.Name,
-			Images:    req.Images,
-			Longitude: req.Longitude,
-			Latitude:  req.Latitude,
-			City:      req.City,
-			State:     req.State,
-			Parking:   req.Parking,
+			ID:       primitive.NewObjectID(),
+			Owner:    req.Owner,
+			Name:     req.Name,
+			Images:   req.Images,
+			Location: req.Location,
+			City:     req.City,
+			State:    req.State,
+			Country:  req.Country,
+			IsPublic: req.IsPublic,
 		}
 
 		// create auth user in database
-		_, err = a.col.InsertOne(context.TODO(), field)
+		_, err = f.col.InsertOne(context.TODO(), field)
 		if err != nil {
-			a.log.WithFields(logrus.Fields{
-				"handler": "Create and insert new field",
-			}).Error("Failed to insert field into the database")
+			f.log.Error(err)
 			rw.WriteHeader(http.StatusBadRequest)
-			rw.Write([]byte(`{ "Bad HTTP Request": " ` + err.Error() + `" }`))
+			rw.Write([]byte(`{ "msg": " ` + err.Error() + `" }`))
 			return
 		}
 		rw.WriteHeader(http.StatusCreated)
 		json.NewEncoder(rw).Encode(field)
 	}
 
+}
+
+/*
+Get Fields  (Get)
+
+  - Grab params and filter fields
+
+  - Grabs field data from database
+
+Returns:
+
+	Http handler
+		- Writes list of fields back to client
+*/
+func (f *FieldService) GetFields() http.HandlerFunc {
+	return func(rw http.ResponseWriter, r *http.Request) {
+		city := r.URL.Query().Get("city")
+		state := r.URL.Query().Get("state")
+		country := r.URL.Query().Get("country")
+		status := r.URL.Query().Get("status")
+		var filter bson.M
+
+		if country == "" {
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(`{ "msg": "you need at least a country to query with." }`))
+			return
+		}
+
+		if state == "" {
+			filter = bson.M{"country": country}
+			if status != "" {
+				filter = bson.M{"country": country, "isPublic": status}
+			}
+		} else if city != "" {
+			filter = bson.M{"country": country, "state": state, "city": city}
+			if status != "" {
+				filter = bson.M{"country": country, "state": state, "city": city, "isPublic": status}
+			}
+		} else {
+			filter = bson.M{"country": country, "state": state}
+			if status != "" {
+				filter = bson.M{"country": country, "state": state, "isPublic": status}
+			}
+		}
+
+		var fields []Field
+		cur, err := f.col.Find(context.TODO(), filter)
+
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				rw.Header().Set("Content-Type", "application/json")
+				rw.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+
+		for cur.Next(context.TODO()) {
+			var field Field
+			err := cur.Decode(&field)
+			if err != nil {
+				f.log.Error(err)
+			}
+			fields = append(fields, field)
+		}
+
+		if len(fields) == 0 {
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		resp := FieldsResponse{
+			TotalFields: len(fields),
+			Fields:      fields,
+		}
+
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusOK)
+		json.NewEncoder(rw).Encode(resp)
+
+	}
 }
 
 /*
@@ -133,29 +228,35 @@ Returns:
 	Http handler
 		- Writes user data back to client
 */
-func (a *FieldService) GetField() http.HandlerFunc {
+func (f *FieldService) GetField() http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		// grab uuid from query
-		keys, ok := r.URL.Query()["id"]
-		if !ok || len(keys[0]) < 1 {
+		// grab club id from path
+		vars := mux.Vars(r)
+		if len(vars["id"]) == 0 {
 			rw.WriteHeader(http.StatusBadRequest)
-			rw.Write([]byte(`{ "Bad HTTP Request": "No UUID found in request." }`))
+			rw.Write([]byte(`{ "msg": "no field id found in request." }`))
 			return
 		}
-		id := keys[0]
 
+		if len(vars["id"]) < 24 {
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(`{ "msg": "bad field id found in request." }`))
+			return
+		}
+
+		id := vars["id"]
 		_, c := context.WithTimeout(context.Background(), 30*time.Second)
 		defer c()
 
 		// find field data in database
 		var field Field
-		OID, err := primitive.ObjectIDFromHex(id)
-		filter := bson.D{primitive.E{Key: "_id", Value: OID}}
-		err = a.col.FindOne(context.TODO(), filter).Decode(&field)
+		oid, _ := primitive.ObjectIDFromHex(id)
+		filter := bson.D{primitive.E{Key: "_id", Value: oid}}
+		err := f.col.FindOne(context.TODO(), filter).Decode(&field)
 		if err != nil {
 			if err == mongo.ErrNoDocuments {
 				rw.WriteHeader(http.StatusNotFound)
-				rw.Write([]byte(`{ "Not Found": "Field does not exist" }`))
+				rw.Write([]byte(`{ "msg": "field does not exist" }`))
 				return
 			}
 		}
@@ -167,15 +268,17 @@ func (a *FieldService) GetField() http.HandlerFunc {
 
 /*
 Update Field Data (PUT)
--	Updates field data
--	Grab parameters and update
+
+  - Updates field data
+
+  - Grab parameters and update
 
 Returns:
 
 	Http handler
 		- Writes updated field back to client
 */
-func (a *FieldService) UpdateField() http.HandlerFunc {
+func (f *FieldService) UpdateField() http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		var req Field
 
@@ -186,67 +289,84 @@ func (a *FieldService) UpdateField() http.HandlerFunc {
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			rw.WriteHeader(http.StatusBadRequest)
-			rw.Write([]byte(`{ "Bad HTTP Request": " ` + err.Error() + `" }`))
+			rw.Write([]byte(`{ "msg": " ` + err.Error() + `" }`))
 			return
 		}
 
-		if req.ID == primitive.NilObjectID {
+		// grab club id from path
+		vars := mux.Vars(r)
+		if len(vars["id"]) == 0 {
 			rw.WriteHeader(http.StatusBadRequest)
-			a.log.Debug(req.ID)
-			rw.Write([]byte(`{ "Bad HTTP Request": "Please Provide a Field ID" }`))
+			rw.Write([]byte(`{ "msg": "no field id found in request." }`))
 			return
 		}
 
-		field := Field{
-			ID:        req.ID,
-			Name:      req.Name,
-			Images:    req.Images,
-			Longitude: req.Longitude,
-			Latitude:  req.Latitude,
-			City:      req.City,
-			State:     req.State,
-			Parking:   req.Parking,
+		if len(vars["id"]) < 24 {
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(`{ "msg": "bad field id found in request." }`))
+			return
 		}
 
-		filter := bson.D{primitive.E{Key: "_id", Value: field.ID}}
-		_, err = a.col.ReplaceOne(context.TODO(), filter, field)
+		id := vars["id"]
+		oid, _ := primitive.ObjectIDFromHex(id)
+		filter := bson.D{primitive.E{Key: "_id", Value: oid}}
+		changes := bson.M{"$set": bson.M{
+			"owner":    req.Owner,
+			"name":     req.Name,
+			"images":   req.Images,
+			"location": req.Location,
+			"city":     req.City,
+			"state":    req.State,
+			"country":  req.Country,
+			"isPublic": req.IsPublic,
+		}}
+
+		_, err = f.col.UpdateOne(context.TODO(), filter, changes)
 		if err != nil {
-			a.log.Debug(err.Error())
+			f.log.Debug(err.Error())
 		}
 
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusOK)
-		json.NewEncoder(rw).Encode(field)
+		rw.Write([]byte(`OK`))
 	}
 }
 
 /*
 Delete Field Data (Delete)
--	Updates field data
--	Grab parameters and update
+
+  - Updates field data
+
+  - Grab parameters and update
 
 Returns:
 
 	Http handler
 		- Writes token back to client
 */
-func (a *FieldService) DeleteField() http.HandlerFunc {
+func (f *FieldService) DeleteField() http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		// grab uuid from query
-		keys, ok := r.URL.Query()["id"]
-		if !ok || len(keys[0]) < 1 {
+		// grab club id from path
+		vars := mux.Vars(r)
+		if len(vars["id"]) == 0 {
 			rw.WriteHeader(http.StatusBadRequest)
-			rw.Write([]byte(`{ "Bad HTTP Request": "No UUID found in request." }`))
+			rw.Write([]byte(`{ "msg": "no field id found in request." }`))
 			return
 		}
-		id := keys[0]
 
-		OID, err := primitive.ObjectIDFromHex(id)
+		if len(vars["id"]) < 24 {
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(`{ "msg": "bad field id found in request." }`))
+			return
+		}
 
-		filter := bson.D{primitive.E{Key: "_id", Value: OID}}
-		_, err = a.col.DeleteOne(context.TODO(), filter)
+		id := vars["id"]
+		oid, _ := primitive.ObjectIDFromHex(id)
+
+		filter := bson.D{primitive.E{Key: "_id", Value: oid}}
+		_, err := f.col.DeleteOne(context.TODO(), filter)
 		if err != nil {
-			a.log.Debug(err.Error())
+			f.log.Debug(err.Error())
 		}
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusOK)
@@ -256,8 +376,10 @@ func (a *FieldService) DeleteField() http.HandlerFunc {
 
 /*
 Validate an Parse JWT Token
--	parse jwt token
-- 	return values
+
+  - parse jwt token
+
+  - return values
 
 Returns:
 
@@ -280,4 +402,51 @@ func (a *FieldService) ValidateAndParseJWTToken(tokenString string) (string, str
 		createdAt := claims["createdAt"].(string)
 		return uuid, provider, createdAt, nil
 	}
+}
+
+/*
+Middleware
+
+  - Makes sure user is authenticated before taking requests
+
+  - If there is no token or a bad token it returns the request with a unauthorized or forbidden error
+
+Returns:
+
+	Http handler
+	- Passes the request to the next handler
+*/
+func (f *FieldService) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		bearerToken := r.Header.Get("Authorization")
+		tokenSplit := strings.Split(bearerToken, "Bearer ")
+
+		if bearerToken == "" {
+			f.log.WithFields(logrus.Fields{
+				"Middleware": "ValidateAndParseJWTToken",
+			}).Error("Failed to validate token")
+			http.Error(rw, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		token := tokenSplit[1]
+		if token == "" {
+			f.log.WithFields(logrus.Fields{
+				"Middleware": "ValidateAndParseJWTToken",
+			}).Error("Failed to validate token")
+			http.Error(rw, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		_, _, _, err := f.ValidateAndParseJWTToken(token)
+
+		if err != nil {
+			f.log.WithFields(logrus.Fields{
+				"Middleware": "ValidateAndParseJWTToken",
+			}).Error("Failed to validate token")
+			http.Error(rw, "Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(rw, r)
+	})
 }
