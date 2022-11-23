@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"olympsis-services/field/db"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 Field Service Struct
 */
 type FieldService struct {
+	rx  db.RedisContext
 	cl  *mongo.Client
 	col *mongo.Collection
 	log *logrus.Logger
@@ -31,6 +34,8 @@ type Field struct {
 	ID       primitive.ObjectID `json:"_id" bson:"_id"`
 	Owner    string             `json:"owner" bson:"owner"`
 	Name     string             `json:"name" bson:"name"`
+	Notes    string             `json:"notes" bson:"notes"`
+	Sports   []string           `json:"sports" bson:"sports"`
 	Images   []string           `json:"images" bson:"images"`
 	Location GeoJSON            `json:"location" bson:"location"`
 	City     string             `json:"city" bson:"city"`
@@ -40,8 +45,8 @@ type Field struct {
 }
 
 type GeoJSON struct {
-	Type        string   `json:"type" bson:"type"`
-	Coordinates []string `json:"coordinates" bson:"coordinates"`
+	Type        string    `json:"type" bson:"type"`
+	Coordinates []float64 `json:"coordinates" bson:"coordinates"`
 }
 
 type FieldsResponse struct {
@@ -63,20 +68,23 @@ Connect to Database
 
   - Grabs Enviroment Variables
 */
-func (a *FieldService) ConnectToDatabase() (bool, error) {
-	a.log.Info("Connecting to Database...")
+func (f *FieldService) ConnectToDatabase() (bool, error) {
+	f.log.Info("Connecting to Database...")
 	cl, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(os.Getenv("DATABASE")))
+
+	// connection to redis
+	f.rx = *db.MakeRedisContext()
 
 	// logs connection result and sets client
 	if err != nil {
-		a.log.Error("Failed to connect to Database!")
-		a.log.Error(err.Error())
+		f.log.Error("Failed to connect to Database!")
+		f.log.Error(err.Error())
 		return false, err
 	} else {
-		a.cl = cl // set controller client to client
-		a.log.Info("Database connection successful.")
+		f.cl = cl // set controller client to client
+		f.log.Info("Database connection successful.")
 		// set the collection
-		a.col = a.cl.Database(os.Getenv("DB_NAME")).Collection(os.Getenv("USER_COL"))
+		f.col = f.cl.Database(os.Getenv("DB_NAME")).Collection(os.Getenv("USER_COL"))
 		return true, nil
 	}
 }
@@ -106,7 +114,7 @@ func (f *FieldService) CreateField() http.HandlerFunc {
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
 			rw.WriteHeader(http.StatusBadRequest)
-			rw.Write([]byte(`{ "Bad HTTP Request": " ` + err.Error() + `" }`))
+			rw.Write([]byte(`{ "msg": " ` + err.Error() + `" }`))
 			return
 		}
 
@@ -114,6 +122,8 @@ func (f *FieldService) CreateField() http.HandlerFunc {
 			ID:       primitive.NewObjectID(),
 			Owner:    req.Owner,
 			Name:     req.Name,
+			Notes:    req.Notes,
+			Sports:   req.Sports,
 			Images:   req.Images,
 			Location: req.Location,
 			City:     req.City,
@@ -130,6 +140,9 @@ func (f *FieldService) CreateField() http.HandlerFunc {
 			rw.Write([]byte(`{ "msg": " ` + err.Error() + `" }`))
 			return
 		}
+
+		f.CreateFieldGeoHash(req.Location.Coordinates[1], req.Location.Coordinates[0], field.ID.Hex())
+
 		rw.WriteHeader(http.StatusCreated)
 		json.NewEncoder(rw).Encode(field)
 	}
@@ -150,53 +163,42 @@ Returns:
 */
 func (f *FieldService) GetFields() http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		city := r.URL.Query().Get("city")
-		state := r.URL.Query().Get("state")
-		country := r.URL.Query().Get("country")
-		status := r.URL.Query().Get("status")
-		var filter bson.M
 
-		if country == "" {
-			rw.Header().Set("Content-Type", "application/json")
+		longitude, _ := strconv.ParseFloat(r.URL.Query().Get("longitude"), 64)
+		latitude, _ := strconv.ParseFloat(r.URL.Query().Get("latitude"), 64)
+		radius, _ := strconv.ParseFloat(r.URL.Query().Get("radius"), 64)
+
+		if longitude == 0 {
 			rw.WriteHeader(http.StatusBadRequest)
-			rw.Write([]byte(`{ "msg": "you need at least a country to query with." }`))
+			rw.Write([]byte(`{ "msg": "you need to have longitude and latitude"}`))
 			return
-		}
 
-		if state == "" {
-			filter = bson.M{"country": country}
-			if status != "" {
-				filter = bson.M{"country": country, "isPublic": status}
-			}
-		} else if city != "" {
-			filter = bson.M{"country": country, "state": state, "city": city}
-			if status != "" {
-				filter = bson.M{"country": country, "state": state, "city": city, "isPublic": status}
-			}
 		} else {
-			filter = bson.M{"country": country, "state": state}
-			if status != "" {
-				filter = bson.M{"country": country, "state": state, "isPublic": status}
-			}
-		}
-
-		var fields []Field
-		cur, err := f.col.Find(context.TODO(), filter)
-
-		if err != nil {
-			if err == mongo.ErrNoDocuments {
-				rw.Header().Set("Content-Type", "application/json")
-				rw.WriteHeader(http.StatusNoContent)
+			if latitude == 0 {
+				rw.WriteHeader(http.StatusBadRequest)
+				rw.Write([]byte(`{ "msg": "you need to have longitude and latitude"}`))
 				return
 			}
 		}
 
-		for cur.Next(context.TODO()) {
+		var fields []Field
+		fieldLocs := f.SearchNearbyFields(latitude, longitude, radius, 100)
+
+		for i := 0; i < len(fieldLocs); i++ {
 			var field Field
-			err := cur.Decode(&field)
+
+			oid, _ := primitive.ObjectIDFromHex(fieldLocs[i])
+			filter := bson.D{primitive.E{Key: "_id", Value: oid}}
+			err := f.col.FindOne(context.TODO(), filter).Decode(&field)
+
 			if err != nil {
-				f.log.Error(err)
+				if err == mongo.ErrNoDocuments {
+					rw.WriteHeader(http.StatusNotFound)
+					rw.Write([]byte(`{ "msg": "field does not exist" }`))
+					return
+				}
 			}
+
 			fields = append(fields, field)
 		}
 
@@ -214,7 +216,6 @@ func (f *FieldService) GetFields() http.HandlerFunc {
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusOK)
 		json.NewEncoder(rw).Encode(resp)
-
 	}
 }
 
@@ -313,6 +314,8 @@ func (f *FieldService) UpdateField() http.HandlerFunc {
 		changes := bson.M{"$set": bson.M{
 			"owner":    req.Owner,
 			"name":     req.Name,
+			"notes":    req.Notes,
+			"sports":   req.Sports,
 			"images":   req.Images,
 			"location": req.Location,
 			"city":     req.City,
@@ -368,10 +371,58 @@ func (f *FieldService) DeleteField() http.HandlerFunc {
 		if err != nil {
 			f.log.Debug(err.Error())
 		}
+
+		f.DeleteFieldGeoHash(id)
+
 		rw.Header().Set("Content-Type", "application/json")
 		rw.WriteHeader(http.StatusOK)
 		rw.Write([]byte(`OK`))
 	}
+}
+
+/*
+Create Field GEOHASH
+
+  - creates a geohash of the location of the field and it's id
+
+  - this makes it so we can do queries by long/lat
+*/
+func (f *FieldService) CreateFieldGeoHash(lat float64, long float64, fieldId string) {
+	res, err := f.rx.GeoAdd(lat, long, fieldId)
+	if err != nil {
+		f.log.Error(err)
+	}
+	if res != 1 {
+		f.log.Error(res)
+	}
+}
+
+/*
+Delete Field GEOHASH
+
+  - deletes a geohash of the location of the field
+*/
+func (f *FieldService) DeleteFieldGeoHash(fieldId string) {
+	res, err := f.rx.RemoveIndex(fieldId)
+	if err != nil {
+		f.log.Error(err)
+	}
+	if res != 1 {
+		f.log.Error(res)
+	}
+}
+
+/*
+Search Nearby Fields
+
+  - uses long/lat and radius in miles to search in redis and get field id's
+*/
+func (f *FieldService) SearchNearbyFields(lat float64, long float64, r float64, l int) []string {
+	res, err := f.rx.GeoRadius(lat, long, r)
+	if err != nil {
+		f.log.Error(err)
+	}
+	return res
 }
 
 /*
