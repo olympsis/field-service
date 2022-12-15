@@ -14,4 +14,4 @@ spec:
   - name: tcp-port
     protocol: TCP
     port: 80
-    targetPort: 7001
+    targetPort: 7002
