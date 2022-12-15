@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: olympsis-field
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: olympsis-field
+  template:
+    metadata:
+      labels:
+        app: olympsis-field
+    spec:
+      containers:
+      - name: olympsis-field
+        imagePullPolicy: Always
+        image: us.gcr.io/diesel-nova-366902/field-service:v0.1
+        ports:
+        - containerPort: 7002
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 7002
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 7002
+          initialDelaySeconds: 30
+          periodSeconds: 60

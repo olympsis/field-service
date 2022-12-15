@@ -1,7 +1,5 @@
 PROJECT_NAME := field
 SERVICE_NAME := field-service
-SERVICE_REPO := localhost:32000/olympsis-field:registry
-PKG := "olympsis-services/$(PROJECT_NAME)"
 PKG_LIST := $( go list ${PKG}/... | grep -v /vendor/)
 GO_FILES := $( find . -name '*.go' | grep -v /vendor/ | grep -v _test.go)
 
@@ -28,18 +26,11 @@ build: dep ## Build the binary file
 	go build -v $(PKG) 
 
 docker:
-	docker build . -t $(SERVICE_REPO)
+	docker build . -t $(SERVICE_NAME)
 	docker rmi $$(docker images -f "dangling=true" -q) --force
-	docker tag $$(docker images --filter 'reference=localhost:32000/olympsis-field' --format "{{.ID}}") $(SERVICE_REPO)
-	docker push $(SERVICE_REPO)
-
-new-docker:
-	docker build . -t $(SERVICE_REPO)
-	docker tag $$(docker images --filter 'reference=localhost:32000/olympsis-field' --format "{{.ID}}") $(SERVICE_REPO)
-	docker push $(SERVICE_REPO)
 
 run:
-	docker run -p 7002:7002 localhost:32000/olympsis-field:registry 
+	docker run -p 7002:7002 $(SERVICE_NAME)
 
 clean: ## Remove previous build
 	rm -f $(PROJECT_NAME)
