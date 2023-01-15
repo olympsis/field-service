@@ -24,7 +24,7 @@ env:
   DEPLOYMENT_NAME: olympsis-field
   REPOSITORY: us.gcr.io
   IMAGE: field-service
-  VERSION: v0.1
+  VERSION: v0.1.5
 
 jobs:
   setup-build-publish-deploy:

@@ -480,7 +480,7 @@ func (f *FieldService) WhoAmi() http.HandlerFunc {
 		rw.WriteHeader(http.StatusOK)
 		rw.Write([]byte(`
 		{
-			"version": "0.1",
+			"version": "0.1.5",
 			"service": "field"
 		}
 		`))

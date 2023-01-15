@@ -5,7 +5,7 @@ RUN go build -o /docker
 RUN go mod download
 ENV PORT=7002
 ENV NIKOLA=1943
-ENV DB_URL=mongodb+srv://admin:gyqMe3-daxsyv-tunsom@production.smchw.mongodb.net/test
+ENV DB_URL=mongodb://service:b2x5bXBzaXMgbWljcm8tc2VydmljZXMgMjAyMg==@master-db.olympsis.internal/olympsis
 ENV DB_NAME=olympsis
 ENV DB_COL=fields
 ENV KEY=SESHAT
