@@ -15,7 +15,7 @@ spec:
       containers:
       - name: olympsis-field
         imagePullPolicy: Always
-        image: us.gcr.io/diesel-nova-366902/field-service:v0.1.5
+        image: us.gcr.io/diesel-nova-366902/field-service:v0.1.6
         ports:
         - containerPort: 7002
         readinessProbe:

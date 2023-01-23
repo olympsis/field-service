@@ -29,7 +29,7 @@ type FieldService struct {
 }
 
 type Field struct {
-	ID       primitive.ObjectID `json:"_id" bson:"_id"`
+	ID       primitive.ObjectID `json:"id" bson:"_id"`
 	Owner    string             `json:"owner" bson:"owner"`
 	Name     string             `json:"name" bson:"name"`
 	Notes    string             `json:"notes" bson:"notes"`
@@ -480,7 +480,7 @@ func (f *FieldService) WhoAmi() http.HandlerFunc {
 		rw.WriteHeader(http.StatusOK)
 		rw.Write([]byte(`
 		{
-			"version": "0.1.5",
+			"version": "0.1.6",
 			"service": "field"
 		}
 		`))
