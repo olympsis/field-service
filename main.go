@@ -31,30 +31,23 @@ func main() {
 		os.Exit(1)
 	}
 
-	// main router for management
-	r.Handle("/", service.WhoAmi()).Methods("GET")
-	r.Handle("/healthz", service.Healthz()).Methods("GET")
-
-	// service subrouter
-	sr := r.PathPrefix("/v1").Subrouter()
-
-	sr.Use(service.Middleware)
+	r.Handle("/v1/healthz", service.Healthz()).Methods("GET")
 
 	// handlers for http requests
 	// get fields
-	sr.Handle("/fields", service.GetFields()).Methods("GET")
+	r.Handle("/v1/fields", service.GetFields()).Methods("GET")
 
 	// get a field
-	sr.Handle("/fields/{id}", service.GetField()).Methods("GET")
+	r.Handle("/v1/fields/{id}", service.GetAField()).Methods("GET")
 
 	// create field
-	sr.Handle("/fields", service.CreateField()).Methods("POST")
+	r.Handle("/v1/fields", service.InsertAField()).Methods("POST")
 
 	// update a field
-	sr.Handle("/fields/{id}", service.UpdateField()).Methods("PUT")
+	r.Handle("/v1/fields/{id}", service.UpdateAField()).Methods("PUT")
 
 	// delete a field
-	sr.Handle("/fields/{id}", service.DeleteField()).Methods("DELETE")
+	r.Handle("/v1/fields/{id}", service.DeleteAField()).Methods("DELETE")
 
 	port := os.Getenv("PORT")
 

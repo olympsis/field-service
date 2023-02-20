@@ -1,5 +1,6 @@
-PROJECT_NAME := field
-SERVICE_NAME := field-service
+VERSION 	 := v1.0
+SERVICE_NAME := olympsis/field
+PKG := "$(SERVICE_NAME)"
 PKG_LIST := $( go list ${PKG}/... | grep -v /vendor/)
 GO_FILES := $( find . -name '*.go' | grep -v /vendor/ | grep -v _test.go)
 
@@ -26,12 +27,16 @@ build: dep ## Build the binary file
 	go build -v $(PKG) 
 
 docker:
-	docker build . -t $(SERVICE_NAME)
-	docker rmi $$(docker images -f "dangling=true" -q) --force
+	docker build . -t $(SERVICE_NAME) --platform linux/amd64 --build-arg VERSION=$(VERSION)
+	docker tag $(SERVICE_NAME):latest $(SERVICE_NAME):$(VERSION)
+	docker push $(SERVICE_NAME):$(VERSION)
+
+local:
+	docker build . -t $(SERVICE_NAME) --build-arg VERSION=$(VERSION)
+	docker tag $(SERVICE_NAME):latest $(SERVICE_NAME):$(VERSION)
 
 run:
-	docker run -p 7002:7002 $(SERVICE_NAME)
+	docker run -p 7002:7002 $(SERVICE_NAME):$(VERSION)
 
 clean: ## Remove previous build
-	rm -f $(PROJECT_NAME)
-
+	rm -f $(SERVICE_NAME)
